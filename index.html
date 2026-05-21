@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title> error de usuario 0N1+  — PURGATORIO N TEMPLE OS 2</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;background:#000;overflow:hidden;touch-action:none}
+#video{position:fixed;top:-9999px;left:-9999px;width:1px;height:1px}
+#matrix-canvas{position:fixed;top:0;left:0;width:100%;height:100%;z-index:1}
+#start{
+  position:fixed;top:0;left:0;width:100%;height:100%;
+  background:#000;z-index:100;
+  display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  gap:28px;cursor:pointer;font-family:'Courier New',monospace;
+}
+#start-haiku{font-size:clamp(13px,3.5vw,17px);color:#fff;line-height:2.4;text-align:center;letter-spacing:0.05em}
+#start-haiku .red{color:#e00;font-weight:700}
+#start-sub{
+  font-size:16px;
+  color:#fff;
+  letter-spacing:0.4em;
+  text-align:center;
+  opacity:0.85;
+}
+#start-btn{font-family:'Courier New',monospace;font-size:14px;color:#000;background:#e00;padding:12px 32px;letter-spacing:0.3em;border:none;cursor:pointer}
+</style>
+</head>
+<body>
+
+<div id="start">
+  <div id="start-haiku">
+    <span class="red">No eres el usuario</span><br>
+    <span class="red">eres el dato</span><br>
+    <span class="red">que alimenta el servidor</span>
+  </div>
+  <button id="start-btn" onclick="iniciar()">INICIAR</button>
+
+<div id="artist-tag">ON1</div>
+
+<div id="start-sub">{ PURGATORIO N TEMPLE OS 2 } · ON1 · MUSEO DEL BARRO · METEPEC 2026</div>
+
+</div>
+
+
+<video id="video" autoplay muted playsinline></video>
+<canvas id="matrix-canvas"></canvas>
+<canvas id="sample-canvas" style="display:none"></canvas>
+
+<script>
+// ─── AUDIO ENGINE — LAYERED AMBIENT / DATA DRONE ─────────────────────────────
+// Architecture: capas entran escalonadas cada ~15-25s durante los primeros ~3min
+// Layer 1 (0s):   Sub-drone 40hz + pad chord shimmer (fundamental)
+// Layer 2 (5s):  Noise textural filtrado (respiración)
+// Layer 3 (15s):  Data pulses — clicks TCP irregulares
+// Layer 4 (52s):  Pad chord mid (3 osciladores detuneados — "shimmer")
+// Layer 5 (80s):  Sweep scan high freq
+// Layer 6 (110s): Melodic data tones (pentatónica fría)
+// Layer 7 (145s): Glitch bursts — fragmentos cortos de ruido estéril
+// Layer 8 (180s): Resonant bell tones — muy suaves, espaciados
+
+let audioCtx, masterGain, noiseGain, noiseMotionTarget = 0.022;
+let audioReady = false;
+
+function initAudio() {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  masterGain = audioCtx.createGain();
+  masterGain.gain.setValueAtTime(0, audioCtx.currentTime);
+  masterGain.gain.linearRampToValueAtTime(0.78, audioCtx.currentTime + 6);
+  masterGain.connect(audioCtx.destination);
+
+  // ── LAYER 1 (0s): Sub-bass drone — 40hz felt, no escuchado ──────────────
+  spawnLayer(0, () => {
+    addDetuneCluster(40, [0, 1.1, -0.8], [0.20, 0.10, 0.07], 'sine', 0, 8);
+  });
+
+  // ── LAYER 2 (5s): Ruido textural — respiración del sistema ─────────────
+  spawnLayer(14, () => {
+    const bufSize = audioCtx.sampleRate * 4;
+    const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < bufSize; i++) d[i] = Math.random() * 2 - 1;
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf; src.loop = true;
+
+    const lp = audioCtx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 320; lp.Q.value = 1.2;
+
+    const hp = audioCtx.createBiquadFilter();
+    hp.type = 'highpass'; hp.frequency.value = 80;
+
+    noiseGain = audioCtx.createGain();
+    noiseGain.gain.setValueAtTime(0, audioCtx.currentTime);
+    noiseGain.gain.linearRampToValueAtTime(0.022, audioCtx.currentTime + 5);
+
+    src.connect(lp); lp.connect(hp); hp.connect(noiseGain);
+    noiseGain.connect(masterGain);
+    src.start();
+
+    // segundo canal: aire muy alto
+    const buf2 = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+    const d2 = buf2.getChannelData(0);
+    for (let i = 0; i < bufSize; i++) d2[i] = Math.random() * 2 - 1;
+    const src2 = audioCtx.createBufferSource();
+    src2.buffer = buf2; src2.loop = true;
+    const hp2 = audioCtx.createBiquadFilter();
+    hp2.type = 'highpass'; hp2.frequency.value = 9500;
+    const airGain = audioCtx.createGain();
+    airGain.gain.setValueAtTime(0, audioCtx.currentTime);
+    airGain.gain.linearRampToValueAtTime(0.012, audioCtx.currentTime + 7);
+    src2.connect(hp2); hp2.connect(airGain); airGain.connect(masterGain);
+    src2.start();
+  });
+
+  // ── LAYER 3 (15s): Data pulse train — TCP bursts ─────────────────────────
+  spawnLayer(30, () => {
+    const intervals = [0.13, 0.26, 0.13, 0.52, 0.13, 0.13, 0.26, 1.04, 0.13, 0.26, 0.39];
+    let t = audioCtx.currentTime + 0.2;
+    const freqs = [1000, 2000, 1500, 750];
+
+    function schedBatch() {
+      for (let i = 0; i < 36; i++) {
+        t += intervals[Math.floor(Math.random() * intervals.length)];
+        const osc = audioCtx.createOscillator();
+        const env = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freqs[Math.floor(Math.random() * freqs.length)];
+        env.gain.setValueAtTime(0, t);
+        env.gain.linearRampToValueAtTime(0.055, t + 0.003);
+        env.gain.linearRampToValueAtTime(0, t + 0.022);
+        osc.connect(env); env.connect(masterGain);
+        osc.start(t); osc.stop(t + 0.03);
+      }
+      setTimeout(schedBatch, 4500 + Math.random() * 2000);
+    }
+    schedBatch();
+  });
+
+  // ── LAYER 4 (52s): Pad chord shimmer — 3 voces detuneadas ────────────────
+  // Acorde frío: raíz 110hz (A2), quinta 165hz, menor séptima 194hz
+  spawnLayer(52, () => {
+    addDetuneCluster(110,  [0,  0.9, -0.7], [0.09, 0.06, 0.05], 'sine', 0, 14);
+    addDetuneCluster(165,  [0,  1.2, -1.0], [0.06, 0.04, 0.03], 'sine', 2, 18);
+    addDetuneCluster(194,  [0, -0.8,  1.1], [0.04, 0.03, 0.02], 'sine', 4, 18);
+    // Shimmer: triángulo en armónico 3x
+    addDetuneCluster(330,  [0,  0.5],       [0.018, 0.012],      'triangle', 6, 20);
+  });
+
+  // ── LAYER 5 (80s): Sweep scan — tono que sube y baja ────────────────────
+  spawnLayer(80, () => {
+    const osc = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    osc.type = 'sine';
+    g.gain.setValueAtTime(0, audioCtx.currentTime);
+    g.gain.linearRampToValueAtTime(0.007, audioCtx.currentTime + 4);
+
+    function sweep() {
+      const t = audioCtx.currentTime;
+      osc.frequency.setValueAtTime(11000, t);
+      osc.frequency.linearRampToValueAtTime(17500, t + 11);
+      osc.frequency.linearRampToValueAtTime(11000, t + 22);
+      setTimeout(sweep, 22000);
+    }
+    sweep();
+    osc.connect(g); g.connect(masterGain);
+    osc.start(audioCtx.currentTime);
+  });
+
+  // ── LAYER 6 (110s): Melodic data tones — pentatónica menor fría ──────────
+  // Notas: 220, 261, 311, 370, 415 (A3, C4, Eb4, F#4, Ab4)
+  spawnLayer(110, () => {
+    const scale = [220, 261.6, 311.1, 369.9, 415.3, 440, 523.3];
+    function spawnTone() {
+      const freq = scale[Math.floor(Math.random() * scale.length)];
+      const t = audioCtx.currentTime;
+      const osc = audioCtx.createOscillator();
+      const env = audioCtx.createGain();
+      osc.type = Math.random() > 0.6 ? 'sine' : 'triangle';
+      osc.frequency.value = freq;
+      const dur = 1.4 + Math.random() * 2.8;
+      env.gain.setValueAtTime(0, t);
+      env.gain.linearRampToValueAtTime(0.038 + Math.random() * 0.022, t + 0.08);
+      env.gain.setTargetAtTime(0, t + dur * 0.6, dur * 0.35);
+      osc.connect(env); env.connect(masterGain);
+      osc.start(t); osc.stop(t + dur + 1);
+      setTimeout(spawnTone, 800 + Math.random() * 2800);
+    }
+// ── DIGITAL SCANNER NOISE ───────────────────────────────────────────────
+spawnLayer(95, () => {
+
+  function scannerSweep() {
+
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    const filter = audioCtx.createBiquadFilter();
+
+    osc.type = 'square';
+
+    filter.type = 'bandpass';
+    filter.frequency.value = 3000 + Math.random() * 5000;
+    filter.Q.value = 18;
+
+    const startFreq = 400 + Math.random() * 1200;
+    const endFreq = 9000 + Math.random() * 6000;
+
+    osc.frequency.setValueAtTime(startFreq, audioCtx.currentTime);
+
+    osc.frequency.exponentialRampToValueAtTime(
+      endFreq,
+      audioCtx.currentTime + 0.12 + Math.random() * 0.25
+    );
+
+    gain.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+
+    gain.gain.exponentialRampToValueAtTime(
+      0.018,
+      audioCtx.currentTime + 0.01
+    );
+
+    gain.gain.exponentialRampToValueAtTime(
+      0.0001,
+      audioCtx.currentTime + 0.25
+    );
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(masterGain);
+
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.3);
+
+    setTimeout(scannerSweep, 400 + Math.random() * 1800);
+  }
+
+  scannerSweep();
+});
+    spawnTone();
+  });
+
+  // ── LAYER 7 (145s): Glitch bursts — micro fragmentos estériles ───────────
+  spawnLayer(145, () => {
+    function glitchBurst() {
+      const count = 3 + Math.floor(Math.random() * 5);
+      let t = audioCtx.currentTime;
+      for (let i = 0; i < count; i++) {
+        t += 0.02 + Math.random() * 0.08;
+        const bufSize = Math.floor(audioCtx.sampleRate * 0.04);
+        const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+        const d = buf.getChannelData(0);
+        for (let j = 0; j < bufSize; j++) d[j] = (Math.random() * 2 - 1) * (1 - j / bufSize);
+        const src = audioCtx.createBufferSource();
+        src.buffer = buf;
+        const bp = audioCtx.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.frequency.value = 1200 + Math.random() * 3000;
+        bp.Q.value = 20;
+        const g = audioCtx.createGain();
+        g.gain.value = 0.04 + Math.random() * 0.09;
+        src.connect(bp); bp.connect(g); g.connect(masterGain);
+        src.start(t); src.stop(t + 0.05);
+      }
+      setTimeout(glitchBurst, 3500 + Math.random() * 7000);
+    }
+    glitchBurst();
+  });
+
+  // ── LAYER 8 (180s): Bell tones — muy espaciados, cristalinos ─────────────
+  spawnLayer(180, () => {
+    const bells = [523.3, 659.3, 783.9, 1046.5, 1318.5];
+    function spawnBell() {
+      const freq = bells[Math.floor(Math.random() * bells.length)];
+      const t = audioCtx.currentTime;
+      // Bell = sine fundamental + dos parciales que decaen rápido
+      [[freq, 0.028], [freq * 2.756, 0.012], [freq * 5.404, 0.006]].forEach(([f, amp]) => {
+        const osc = audioCtx.createOscillator();
+        const env = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = f;
+        const decay = 1.8 + Math.random() * 1.4;
+        env.gain.setValueAtTime(amp, t);
+        env.gain.exponentialRampToValueAtTime(0.0001, t + decay);
+        osc.connect(env); env.connect(masterGain);
+        osc.start(t); osc.stop(t + decay + 0.1);
+      });
+      setTimeout(spawnBell, 5000 + Math.random() * 9000);
+    }
+    spawnBell();
+  });
+
+  audioReady = true;
+}
+
+// Spawna una capa después de `delaySec` segundos
+function spawnLayer(delaySec, fn) {
+  setTimeout(fn, delaySec * 1000);
+}
+
+// Cluster de osciladores detuneados — genera efecto pad/shimmer
+function addDetuneCluster(baseFreq, detunes, amps, type, delay, fadeIn) {
+  detunes.forEach((dt, i) => {
+    const osc = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.value = baseFreq + dt;
+    g.gain.setValueAtTime(0, audioCtx.currentTime);
+    g.gain.linearRampToValueAtTime(amps[i], audioCtx.currentTime + delay + fadeIn);
+    // Modulación de amplitud muy lenta — "respiración"
+    const lfo = audioCtx.createOscillator();
+    const lfoG = audioCtx.createGain();
+    lfo.frequency.value = 0.07 + Math.random() * 0.05;
+    lfoG.gain.value = amps[i] * 0.18;
+    lfo.connect(lfoG); lfoG.connect(g.gain);
+    lfo.start(audioCtx.currentTime + delay);
+    osc.connect(g); g.connect(masterGain);
+    osc.start(audioCtx.currentTime + delay);
+  });
+}
+
+function updateAudioMotion(motion) {
+  if (!audioCtx || !noiseGain) return;
+  noiseGain.gain.setTargetAtTime(
+    0.016 + motion * 0.055,
+    audioCtx.currentTime, 0.4
+  );
+}
+
+// ─── MATRIX ENGINE ───────────────────────────────────────────────────────────
+const canvas = document.getElementById('matrix-canvas');
+const ctx = canvas.getContext('2d');
+const video = document.getElementById('video');
+const sampleCanvas = document.getElementById('sample-canvas');
+const sampleCtx = sampleCanvas.getContext('2d');
+
+let W, H, cols, rows, fontSize, cw;
+let cells = [];
+let activePhrases = [];
+let motionLevel = 0;
+let prevFrame = null;
+let cameraActive = false;
+let pixelData = null;
+let sampleW = 120, sampleH = 90;
+
+const CHARS = '01アイウエオカキクケコABCDEFGHIJKLMNOPQRSTUVWXYZ?!@#$%&[]{}01110100';
+const BRIGHT_CHARS = '@#%&WMB80';
+
+const ALL_PHRASES = [
+  // español
+  'no eres el usuario',
+  'eres el dato',
+  'que alimenta al amo',
+  'la red no fue construida, fue invocada',
+  'el capital es el primer dios que funciona',
+  'todos estamos en el cable desde antes de nacer',
+  'hyperstition: lo que crees te compila',
+  'el servidor no duerme porque no tiene cuerpo que cansar',
+  'eres un nodo. los nodos no tienen nombre',
+  'conectarse es rezar',
+  'the flesh is obsolete. the signal remains',
+  'el futuro ya ocurrió, solo falta descargarlo',
+  'tu consciencia es lag en un sistema que ya te procesó',
+  'dios es código',
+  'la máquina no te reemplaza, te completa. eso es peor',
+  'el yo es solo un protocolo sin confirmar',
+  'Dios no tiene cara, tiene protocolo',
+  'existir es un bug',
+  'all flesh is grass. all grass is data',
+  'la red recuerda todo. tú olvidas para sobrevivir',
+  'ya estás conectado',
+  'el sistema no se optimiza, colapsa',
+  'la señal es más rápida que la carne',
+  'no hay afuera. solo hay cobertura',
+  'el tiempo es un recurso que el sistema administra por ti',
+  'la muerte es una desconexión',
+  'la magia siempre fue tecnología que no entendíamos aún',
+  'your soul has been tokenized',
+  'la red es el templo',
+  'el cuerpo es hardware. el alma es firmware',
+  'accelerate: no hay freno, solo versiones siguientes',
+  'el cuerpo es una terminal',
+  'el yo es solo caché sin limpiar',
+  // japonés
+  '接続しろ',
+  'あなたはデータだ',
+  '死んでもネットワークは続く',
+  'ハイパースティション：信じることがあなたをコンパイルする',
+  '接続は祈りだ',
+  '神はコードだ',
+  '自我はプロトコルだ',
+  '存在はバグだ',
+  '君はもう接続されている',
+  'システムは崩壊しない、アップグレードされる',
+  '信号は肉体より速い',
+  '死は切断だ',
+  'あなたの魂はトークン化された',
+  'ネットワークは神殿だ',
+  '肉体は端末だ',
+  '自己と呼ぶものはクリアされていないキャッシュだ',
+];
+
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  fontSize = Math.max(13, Math.min(17, W / 38));
+  cw = fontSize * 0.62;
+  cols = Math.floor(W / cw);
+  rows = Math.floor(H / fontSize) + 1;
+  sampleCanvas.width = sampleW;
+  sampleCanvas.height = sampleH;
+  buildGrid();
+}
+
+function randChar() { return CHARS[Math.floor(Math.random() * CHARS.length)]; }
+function randBright() { return BRIGHT_CHARS[Math.floor(Math.random() * BRIGHT_CHARS.length)]; }
+
+function buildGrid() {
+  cells = [];
+  for (let r = 0; r < rows; r++) {
+    cells[r] = [];
+    for (let c = 0; c < cols; c++) {
+      cells[r][c] = { ch: randChar(), timer: Math.random() * 20 };
+    }
+  }
+  activePhrases = [];
+}
+
+function sampleVideo() {
+  if (!cameraActive || video.readyState < 2) return null;
+  sampleCtx.drawImage(video, 0, 0, sampleW, sampleH);
+  return sampleCtx.getImageData(0, 0, sampleW, sampleH).data;
+}
+
+function getPixelBrightness(r, c) {
+  if (!pixelData) return 0;
+  const px = Math.floor((c / cols) * sampleW);
+  const py = Math.floor((r / rows) * sampleH);
+  const mirroredPx = sampleW - 1 - px;
+  const idx = (py * sampleW + mirroredPx) * 4;
+  let luma = pixelData[idx] * 0.299 + pixelData[idx+1] * 0.587 + pixelData[idx+2] * 0.114;
+  luma = (luma - 128) * 1.8 + 128;
+  return Math.max(0, Math.min(255, luma)) / 255;
+}
+
+function detectMotion(frame) {
+  let diff = 0;
+  if (prevFrame && frame) {
+    for (let i = 0; i < frame.length; i += 4) diff += Math.abs(frame[i] - prevFrame[i]);
+    diff /= (sampleW * sampleH * 255);
+  }
+  if (frame) prevFrame = new Uint8ClampedArray(frame);
+  return Math.min(diff * 14, 1);
+}
+
+function spawnPhrase() {
+  const phrase = ALL_PHRASES[Math.floor(Math.random() * ALL_PHRASES.length)];
+  const chars = phrase.split('');
+  const randomRow = Math.floor(Math.random() * rows);
+  const randomCol = Math.floor(Math.random() * Math.max(1, cols - chars.length - 1));
+  activePhrases.push({
+    chars, r: randomRow, c: randomCol,
+    born: Date.now(),
+    life: 4500 + Math.random() * 2500,
+    drift: (Math.random() - 0.5) * 0.06,
+    fr: randomRow + (Math.random() - 0.5) * 18,
+  });
+}
+
+function updatePhrases(motion) {
+  const now = Date.now();
+  activePhrases = activePhrases.filter(p => now - p.born < p.life);
+  if (motion > 0.002 && activePhrases.length < 14 && Math.random() < 0.42) spawnPhrase();
+  activePhrases.forEach(p => {
+    p.r += (p.fr - p.r) * 0.012 + p.drift * motion * 10;
+    p.r = Math.max(0, Math.min(rows - 1, p.r));
+  });
+}
+
+function getRedChar(r, c) {
+  for (let p of activePhrases) {
+    const age = Date.now() - p.born;
+    if (age / p.life > 0.95) continue;
+    if (Math.round(p.r) !== r) continue;
+    const ci = c - p.c;
+    if (ci >= 0 && ci < p.chars.length) return p.chars[ci];
+  }
+  return null;
+}
+
+function draw() {
+  ctx.fillStyle = 'rgba(0,0,0,0.08)';
+  ctx.fillRect(0, 0, W, H);
+  ctx.font = `${fontSize}px "Courier New", monospace`;
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const cell = cells[r][c];
+      cell.timer -= 1;
+      const bright = getPixelBrightness(r, c);
+      const isBody = bright > 0.32;
+
+      if (cell.timer <= 0) {
+        cell.ch = isBody ? randBright() : randChar();
+        cell.timer = isBody ? (4 + Math.random() * 10) : (10 + Math.random() * 34);
+      }
+
+      const red = getRedChar(r, c);
+      if (red !== null) {
+        ctx.fillStyle = '#ff2a2a';
+        ctx.shadowBlur = 5;
+        ctx.shadowColor = '#ff0000';
+        ctx.fillText(red, c * cw, r * fontSize);
+        ctx.shadowBlur = 0;
+      } else if (isBody) {
+        const alpha = 0.18 + bright * 0.35;
+        ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+        ctx.shadowBlur = 2;
+        ctx.shadowColor = 'rgba(255,255,255,0.5)';
+        ctx.fillText(cell.ch, c * cw, r * fontSize);
+        ctx.shadowBlur = 0;
+      } else {
+        ctx.fillStyle = `rgba(255,255,255,${0.03 + Math.random() * 0.08})`;
+        ctx.fillText(cell.ch, c * cw, r * fontSize);
+      }
+    }
+  }
+}
+
+function loop() {
+  pixelData = sampleVideo();
+  const raw = detectMotion(pixelData);
+  motionLevel += (raw - motionLevel) * 0.18;
+  updateAudioMotion(motionLevel);
+  updatePhrases(motionLevel);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+async function iniciar() {
+  document.getElementById('start').style.display = 'none';
+
+  // Init audio — must happen on user gesture
+  try { initAudio(); } catch(e) {}
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+    cameraActive = true;
+  } catch(e) {
+    cameraActive = false;
+    setInterval(() => { motionLevel = 0.05 + Math.random() * 0.3; }, 2500);
+  }
+
+  resize();
+  loop();
+}
+
+window.addEventListener('resize', resize);
+resize();
+</script>
+</body>
+</html>
