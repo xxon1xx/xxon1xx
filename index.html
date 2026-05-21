@@ -78,8 +78,106 @@ function initAudio() {
 
   masterGain = audioCtx.createGain();
   masterGain.gain.setValueAtTime(0, audioCtx.currentTime);
-  masterGain.gain.linearRampToValueAtTime(0.55, audioCtx.currentTime + 4);
+  masterGain.gain.linearRampToValueAtTime(0.55, audioCtx.currentTime + 1.5);
   masterGain.connect(limiter);
+
+
+  // ── VOCAL PAD (4s): voz robótica etérea — pad de fondo muy tenue ─────────
+  // Técnica: noise filtrado con formantes de vocales (F1/F2) + vibrato lento
+  // Suena como una voz humana procesada hasta casi desaparecer
+  spawnLayer(4, () => {
+    const vocalGain = audioCtx.createGain();
+    vocalGain.gain.setValueAtTime(0, audioCtx.currentTime);
+    vocalGain.gain.linearRampToValueAtTime(0.038, audioCtx.currentTime + 12);
+    vocalGain.connect(masterGain);
+
+    // ── Fuente: ruido + tono de glotis ──────────────────────────────────────
+    // El ruido simula el tracto vocal, el tono la cuerda vocal
+    const nBufSize = audioCtx.sampleRate * 3;
+    const nBuf = audioCtx.createBuffer(1, nBufSize, audioCtx.sampleRate);
+    const nData = nBuf.getChannelData(0);
+    for (let i = 0; i < nBufSize; i++) nData[i] = Math.random() * 2 - 1;
+    const nSrc = audioCtx.createBufferSource();
+    nSrc.buffer = nBuf; nSrc.loop = true;
+
+    // Fundamental de glotis — pitch de "voz" robótica: 90hz muy suave
+    const glottis = audioCtx.createOscillator();
+    glottis.type = 'sawtooth'; // armónicos ricos como voz real
+    glottis.frequency.value = 90;
+    const glottisGain = audioCtx.createGain();
+    glottisGain.gain.value = 0.3; // mezcla relativa con noise
+
+    // ── Vibrato en el pitch — da el carácter "fantasma" ────────────────────
+    const vibrato = audioCtx.createOscillator();
+    const vibratoDepth = audioCtx.createGain();
+    vibrato.frequency.value = 0.18; // muy lento — casi un tremolo
+    vibratoDepth.gain.value = 3.5;  // ±3.5hz de variación de pitch
+    vibrato.connect(vibratoDepth);
+    vibratoDepth.connect(glottis.frequency);
+    vibrato.start(audioCtx.currentTime);
+
+    // ── Formantes de vocal: cadena de filtros peaking/bandpass ──────────────
+    // Morfología de formantes que rota lentamente entre vocales
+    // "a": F1=800 F2=1200  "e": F1=400 F2=2300  "o": F1=500 F2=900
+    // Usamos 3 bandpass + 1 peaking para emular el tracto vocal
+    const f1 = audioCtx.createBiquadFilter(); // formante 1
+    f1.type = 'peaking'; f1.frequency.value = 600; f1.Q.value = 4; f1.gain.value = 14;
+
+    const f2 = audioCtx.createBiquadFilter(); // formante 2
+    f2.type = 'peaking'; f2.frequency.value = 1400; f2.Q.value = 5; f2.gain.value = 10;
+
+    const f3 = audioCtx.createBiquadFilter(); // formante 3 — brillo
+    f3.type = 'peaking'; f3.frequency.value = 2800; f3.Q.value = 6; f3.gain.value = 7;
+
+    const bodyHp = audioCtx.createBiquadFilter(); // elimina sub-graves de la voz
+    bodyHp.type = 'highpass'; bodyHp.frequency.value = 180;
+
+    const bodyLp = audioCtx.createBiquadFilter(); // techo suave
+    bodyLp.type = 'lowpass'; bodyLp.frequency.value = 4200;
+
+    // Mezcla glotis + noise → filtros de formantes → vocalGain
+    const preMix = audioCtx.createGain(); preMix.gain.value = 1;
+    glottis.connect(glottisGain); glottisGain.connect(preMix);
+    nSrc.connect(preMix);
+    preMix.connect(bodyHp); bodyHp.connect(f1); f1.connect(f2); f2.connect(f3);
+    f3.connect(bodyLp); bodyLp.connect(vocalGain);
+
+    glottis.start(audioCtx.currentTime);
+    nSrc.start();
+    vibrato.start(audioCtx.currentTime);
+
+    // ── Morphing lento de formantes — la "voz" muta entre vocales ───────────
+    // Cada 8-18s cambia suavemente la frecuencia de F1 y F2
+    const vowels = [
+      { f1: 800,  f2: 1200 }, // "a"
+      { f1: 400,  f2: 2300 }, // "e"
+      { f1: 500,  f2: 900  }, // "o"
+      { f1: 350,  f2: 1900 }, // "i" procesada
+      { f1: 650,  f2: 1080 }, // "u" oscura
+    ];
+    let vowelIdx = 0;
+    function morphVowel() {
+      vowelIdx = (vowelIdx + 1) % vowels.length;
+      const v = vowels[vowelIdx];
+      const t = audioCtx.currentTime;
+      const morphTime = 4 + Math.random() * 5; // transición lenta
+      f1.frequency.setValueAtTime(f1.frequency.value, t);
+      f1.frequency.linearRampToValueAtTime(v.f1, t + morphTime);
+      f2.frequency.setValueAtTime(f2.frequency.value, t);
+      f2.frequency.linearRampToValueAtTime(v.f2, t + morphTime);
+      setTimeout(morphVowel, (8 + Math.random() * 12) * 1000);
+    }
+    setTimeout(morphVowel, 6000);
+
+    // ── Tremolo muy lento sobre el vocalGain — "respiración" de la voz ──────
+    const tremolo = audioCtx.createOscillator();
+    const tremoloDepth = audioCtx.createGain();
+    tremolo.frequency.value = 0.06; // ciclo ~16s — casi imperceptible
+    tremoloDepth.gain.value = 0.012; // ±1.2% de variación
+    tremolo.connect(tremoloDepth);
+    tremoloDepth.connect(vocalGain.gain);
+    tremolo.start(audioCtx.currentTime);
+  });
 
   // ── LAYER 1 (0s): Sub-bass drone — 40hz felt ────────────────────────────
   // Amplitudes reducidas para no saturar el master desde el inicio
@@ -88,7 +186,7 @@ function initAudio() {
   });
 
   // ── LAYER 2 (8s): Ruido textural — respiración del sistema ──────────────
-  spawnLayer(8, () => {
+  spawnLayer(2, () => {
     const bufSize = audioCtx.sampleRate * 4;
     const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
     const d = buf.getChannelData(0);
@@ -125,7 +223,7 @@ function initAudio() {
   });
 
   // ── LAYER 3 (20s): Data pulse train — TCP bursts ────────────────────────
-  spawnLayer(20, () => {
+  spawnLayer(8, () => {
     const intervals = [0.13, 0.26, 0.13, 0.52, 0.13, 0.13, 0.26, 1.04, 0.13, 0.26, 0.39];
     let t = audioCtx.currentTime + 0.1;
     const freqs = [1000, 2000, 1500, 750];
@@ -151,7 +249,7 @@ function initAudio() {
   });
 
   // ── LAYER 4 (35s): Pad chord shimmer ────────────────────────────────────
-  spawnLayer(35, () => {
+  spawnLayer(6, () => {
     addDetuneCluster(110, [0,  0.9, -0.7], [0.055, 0.035, 0.028], 'sine',     0,  12);
     addDetuneCluster(165, [0,  1.2, -1.0], [0.038, 0.024, 0.018], 'sine',     3,  14);
     addDetuneCluster(194, [0, -0.8,  1.1], [0.025, 0.016, 0.012], 'sine',     6,  14);
@@ -159,7 +257,7 @@ function initAudio() {
   });
 
   // ── LAYER 5 (55s): Sweep scan high freq ─────────────────────────────────
-  spawnLayer(55, () => {
+  spawnLayer(22, () => {
     const osc = audioCtx.createOscillator();
     const g = audioCtx.createGain();
     osc.type = 'sine';
@@ -178,7 +276,7 @@ function initAudio() {
   });
 
   // ── LAYER 6 (75s): Melodic data tones — pentatónica menor ───────────────
-  spawnLayer(75, () => {
+  spawnLayer(35, () => {
     const scale = [220, 261.6, 311.1, 369.9, 415.3, 440, 523.3];
     function spawnTone() {
       const freq = scale[Math.floor(Math.random() * scale.length)];
@@ -193,13 +291,14 @@ function initAudio() {
       env.gain.setTargetAtTime(0, t + dur * 0.6, dur * 0.35);
       osc.connect(env); env.connect(masterGain);
       osc.start(t); osc.stop(t + dur + 1);
+      osc.onended = () => { try { osc.disconnect(); env.disconnect(); } catch(e){} };
       setTimeout(spawnTone, 800 + Math.random() * 2800);
     }
     spawnTone();
   });
 
   // ── LAYER 7 (50s): Digital scanner — sweep de frecuencia filtrado ────────
-  spawnLayer(50, () => {
+  spawnLayer(20, () => {
     function scannerSweep() {
       const t = audioCtx.currentTime + 0.01; // pequeño offset para evitar click
       const osc = audioCtx.createOscillator();
@@ -229,6 +328,7 @@ function initAudio() {
 
       osc.start(t);
       osc.stop(t + dur + 0.05);
+      osc.onended = () => { try { osc.disconnect(); filter.disconnect(); gain.disconnect(); } catch(e){} };
 
       setTimeout(scannerSweep, 500 + Math.random() * 2000);
     }
@@ -236,7 +336,7 @@ function initAudio() {
   });
 
   // ── LAYER 8 (95s): Glitch bursts — micro fragmentos ─────────────────────
-  spawnLayer(95, () => {
+  spawnLayer(40, () => {
     function glitchBurst() {
       const count = 2 + Math.floor(Math.random() * 4);
       let t = audioCtx.currentTime + 0.01;
@@ -260,6 +360,7 @@ function initAudio() {
         g.gain.value = 0.035 + Math.random() * 0.045;
         src.connect(bp); bp.connect(g); g.connect(masterGain);
         src.start(t);
+        src.onended = () => { try { src.disconnect(); bp.disconnect(); g.disconnect(); } catch(e){} };
       }
       setTimeout(glitchBurst, 3000 + Math.random() * 6000);
     }
@@ -267,7 +368,7 @@ function initAudio() {
   });
 
   // ── LAYER 9 (120s): Bell tones cristalinos ───────────────────────────────
-  spawnLayer(120, () => {
+  spawnLayer(25, () => {
     const bells = [523.3, 659.3, 783.9, 1046.5, 1318.5];
     function spawnBell() {
       const freq = bells[Math.floor(Math.random() * bells.length)];
@@ -283,6 +384,7 @@ function initAudio() {
         env.gain.exponentialRampToValueAtTime(0.0001, t + decay);
         osc.connect(env); env.connect(masterGain);
         osc.start(t); osc.stop(t + decay + 0.1);
+        osc.onended = () => { try { osc.disconnect(); env.disconnect(); } catch(e){} };
       });
       setTimeout(spawnBell, 5000 + Math.random() * 9000);
     }
@@ -359,6 +461,7 @@ function initAudio() {
 
       osc.connect(filt); filt.connect(env); env.connect(masterGain);
       osc.start(t); osc.stop(t + dur + 0.05);
+      osc.onended = () => { try { osc.disconnect(); filt.disconnect(); env.disconnect(); } catch(e){} };
 
       setTimeout(servoWhine, 1500 + Math.random() * 5000);
     }
@@ -498,6 +601,7 @@ function initAudio() {
         env.gain.exponentialRampToValueAtTime(0.0001, st + dur);
         osc.connect(filt); filt.connect(env); env.connect(masterGain);
         osc.start(st); osc.stop(st + dur + 0.01);
+        osc.onended = () => { try { osc.disconnect(); filt.disconnect(); env.disconnect(); } catch(e){} };
         st += dur + 0.008 + Math.random() * 0.04;
       }
       setTimeout(hddSeek, 300 + Math.random() * 2500);
@@ -506,7 +610,7 @@ function initAudio() {
   });
 
   // MACHINE F (30s): CPU hum - armónicos de 60hz como fuente de poder
-  spawnLayer(30, () => {
+  spawnLayer(12, () => {
     [60, 120, 180, 300].forEach((freq, i) => {
       const osc = audioCtx.createOscillator();
       const g = audioCtx.createGain();
@@ -527,7 +631,7 @@ function initAudio() {
   });
 
   // MACHINE G (18s): Bit crusher - audio colapsando a baja resolución
-  spawnLayer(18, () => {
+  spawnLayer(7, () => {
     function bitCrush() {
       const t = audioCtx.currentTime + 0.008;
       const dur = 0.08 + Math.random() * 0.35;
@@ -553,13 +657,14 @@ function initAudio() {
       hp.type = 'highpass'; hp.frequency.value = 400;
       src.connect(hp); hp.connect(env); env.connect(masterGain);
       src.start(t);
+      src.onended = () => { try { src.disconnect(); hp.disconnect(); env.disconnect(); } catch(e){} };
       setTimeout(bitCrush, 1800 + Math.random() * 6000);
     }
     bitCrush();
   });
 
   // MACHINE H (45s): Modem handshake - negociación 56k analógica
-  spawnLayer(45, () => {
+  spawnLayer(18, () => {
     function modemBurst() {
       const t0 = audioCtx.currentTime + 0.01;
       const toneCount = 4 + Math.floor(Math.random() * 5);
@@ -591,40 +696,43 @@ function initAudio() {
   // MACHINE I (55s): RAM bus noise - transferencia de bloques de memoria
   spawnLayer(55, () => {
     function ramBurst() {
-      const t = audioCtx.currentTime + 0.008;
-      const dur = 0.012 + Math.random() * 0.07;
-      const bufSize = Math.floor(audioCtx.sampleRate * dur);
-      const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
-      const data = buf.getChannelData(0);
-      for (let i = 0; i < bufSize; i++) {
-        data[i] = (Math.random() > 0.5 ? 1 : -1) * Math.sin(i / bufSize * Math.PI);
+      // Genera una ráfaga de N pulsos en secuencia, sin recursión
+      const burstCount = 1 + Math.floor(Math.random() * 6);
+      const dur = 0.012 + Math.random() * 0.055;
+      for (let b = 0; b < burstCount; b++) {
+        const t = audioCtx.currentTime + 0.008 + b * (dur + 0.006);
+        const bufSize = Math.floor(audioCtx.sampleRate * dur);
+        const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < bufSize; i++) {
+          data[i] = (Math.random() > 0.5 ? 1 : -1) * Math.sin(i / bufSize * Math.PI);
+        }
+        const src = audioCtx.createBufferSource();
+        src.buffer = buf;
+        const hp = audioCtx.createBiquadFilter();
+        hp.type = 'highpass'; hp.frequency.value = 7000;
+        const g = audioCtx.createGain();
+        g.gain.value = 0.038 + Math.random() * 0.028;
+        src.connect(hp); hp.connect(g); g.connect(masterGain);
+        src.start(t);
+        // Desconectar después de reproducir — libera el nodo del grafo
+        src.onended = () => { try { src.disconnect(); hp.disconnect(); g.disconnect(); } catch(e){} };
       }
-      const src = audioCtx.createBufferSource();
-      src.buffer = buf;
-      const hp = audioCtx.createBiquadFilter();
-      hp.type = 'highpass'; hp.frequency.value = 7000;
-      const g = audioCtx.createGain();
-      g.gain.value = 0.04 + Math.random() * 0.03;
-      src.connect(hp); hp.connect(g); g.connect(masterGain);
-      src.start(t);
-      const burstCount = 1 + Math.floor(Math.random() * 8);
-      for (let b = 1; b < burstCount; b++) {
-        setTimeout(ramBurst, b * (dur * 1000 + Math.random() * 25));
-      }
-      setTimeout(ramBurst, 500 + Math.random() * 2800 + burstCount * 80);
+      // Un solo setTimeout por ciclo, con delay mínimo seguro
+      setTimeout(ramBurst, 600 + Math.random() * 3000);
     }
     ramBurst();
   });
 
   // MACHINE J (70s): Network packet storm - TCP colapsando
-  spawnLayer(70, () => {
+  spawnLayer(30, () => {
     function packetStorm() {
       const isDense = Math.random() < 0.35;
-      const count = isDense ? 8 + Math.floor(Math.random() * 16) : 1;
-      let t = audioCtx.currentTime + 0.005;
+      const count = isDense ? 4 + Math.floor(Math.random() * 8) : 1; // máx 12, no 24
+      let t = audioCtx.currentTime + 0.008;
       for (let i = 0; i < count; i++) {
-        t += isDense ? 0.008 + Math.random() * 0.03 : 0;
-        const bufSize = Math.floor(audioCtx.sampleRate * 0.004);
+        t += isDense ? 0.012 + Math.random() * 0.04 : 0;
+        const bufSize = Math.floor(audioCtx.sampleRate * 0.005);
         const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
         const d = buf.getChannelData(0);
         for (let j = 0; j < bufSize; j++) d[j] = (Math.random() * 2 - 1) * (1 - j / bufSize);
@@ -633,20 +741,22 @@ function initAudio() {
         const bp = audioCtx.createBiquadFilter();
         bp.type = 'bandpass';
         bp.frequency.value = 800 + Math.random() * 4000;
-        bp.Q.value = 6 + Math.random() * 12;
+        bp.Q.value = 6 + Math.random() * 10;
         const g = audioCtx.createGain();
-        g.gain.value = 0.028 + Math.random() * 0.04;
+        g.gain.value = 0.025 + Math.random() * 0.035;
         src.connect(bp); bp.connect(g); g.connect(masterGain);
         src.start(t);
+        src.onended = () => { try { src.disconnect(); bp.disconnect(); g.disconnect(); } catch(e){} };
       }
       const dropout = Math.random() < 0.15;
-      setTimeout(packetStorm, dropout ? 400 + Math.random() * 1200 : 80 + Math.random() * 500);
+      // Delay mínimo aumentado: 200ms en vez de 80ms
+      setTimeout(packetStorm, dropout ? 500 + Math.random() * 1500 : 200 + Math.random() * 800);
     }
     packetStorm();
   });
 
   // MACHINE K (85s): Voltage sag - caída de voltaje con crackle eléctrico
-  spawnLayer(85, () => {
+  spawnLayer(38, () => {
     function voltageSag() {
       const t = audioCtx.currentTime;
       const sagAmt = 0.04 + Math.random() * 0.08;
@@ -669,7 +779,7 @@ function initAudio() {
   });
 
   // MACHINE L (100s): Buffer overflow glitch - cascada de frecuencias
-  spawnLayer(100, () => {
+  spawnLayer(50, () => {
     function overflow() {
       const t = audioCtx.currentTime + 0.005;
       const steps = 6 + Math.floor(Math.random() * 7);
@@ -687,6 +797,7 @@ function initAudio() {
         hp.type = 'highpass'; hp.frequency.value = 300;
         osc.connect(hp); hp.connect(env); env.connect(masterGain);
         osc.start(st); osc.stop(st + 0.08);
+        osc.onended = () => { try { osc.disconnect(); hp.disconnect(); env.disconnect(); } catch(e){} };
       }
       setTimeout(overflow, 5000 + Math.random() * 12000);
     }
