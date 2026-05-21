@@ -67,18 +67,28 @@ let audioReady = false;
 function initAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
+  // Limiter al final de la cadena — evita clipping sin importar cuántas capas sumen
+  const limiter = audioCtx.createDynamicsCompressor();
+  limiter.threshold.value = -6;
+  limiter.knee.value = 3;
+  limiter.ratio.value = 20;
+  limiter.attack.value = 0.001;
+  limiter.release.value = 0.1;
+  limiter.connect(audioCtx.destination);
+
   masterGain = audioCtx.createGain();
   masterGain.gain.setValueAtTime(0, audioCtx.currentTime);
-  masterGain.gain.linearRampToValueAtTime(0.78, audioCtx.currentTime + 6);
-  masterGain.connect(audioCtx.destination);
+  masterGain.gain.linearRampToValueAtTime(0.55, audioCtx.currentTime + 4);
+  masterGain.connect(limiter);
 
-  // ── LAYER 1 (0s): Sub-bass drone — 40hz felt, no escuchado ──────────────
+  // ── LAYER 1 (0s): Sub-bass drone — 40hz felt ────────────────────────────
+  // Amplitudes reducidas para no saturar el master desde el inicio
   spawnLayer(0, () => {
-    addDetuneCluster(40, [0, 1.1, -0.8], [0.20, 0.10, 0.07], 'sine', 0, 8);
+    addDetuneCluster(40, [0, 1.1, -0.8], [0.12, 0.06, 0.04], 'sine', 0, 6);
   });
 
-  // ── LAYER 2 (5s): Ruido textural — respiración del sistema ─────────────
-  spawnLayer(14, () => {
+  // ── LAYER 2 (8s): Ruido textural — respiración del sistema ──────────────
+  spawnLayer(8, () => {
     const bufSize = audioCtx.sampleRate * 4;
     const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
     const d = buf.getChannelData(0);
@@ -87,20 +97,19 @@ function initAudio() {
     src.buffer = buf; src.loop = true;
 
     const lp = audioCtx.createBiquadFilter();
-    lp.type = 'lowpass'; lp.frequency.value = 320; lp.Q.value = 1.2;
-
+    lp.type = 'lowpass'; lp.frequency.value = 300; lp.Q.value = 0.8;
     const hp = audioCtx.createBiquadFilter();
-    hp.type = 'highpass'; hp.frequency.value = 80;
+    hp.type = 'highpass'; hp.frequency.value = 90;
 
     noiseGain = audioCtx.createGain();
     noiseGain.gain.setValueAtTime(0, audioCtx.currentTime);
-    noiseGain.gain.linearRampToValueAtTime(0.022, audioCtx.currentTime + 5);
+    noiseGain.gain.linearRampToValueAtTime(0.018, audioCtx.currentTime + 5);
 
     src.connect(lp); lp.connect(hp); hp.connect(noiseGain);
     noiseGain.connect(masterGain);
     src.start();
 
-    // segundo canal: aire muy alto
+    // Capa de aire alto — muy sutil
     const buf2 = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
     const d2 = buf2.getChannelData(0);
     for (let i = 0; i < bufSize; i++) d2[i] = Math.random() * 2 - 1;
@@ -110,57 +119,56 @@ function initAudio() {
     hp2.type = 'highpass'; hp2.frequency.value = 9500;
     const airGain = audioCtx.createGain();
     airGain.gain.setValueAtTime(0, audioCtx.currentTime);
-    airGain.gain.linearRampToValueAtTime(0.012, audioCtx.currentTime + 7);
+    airGain.gain.linearRampToValueAtTime(0.008, audioCtx.currentTime + 7);
     src2.connect(hp2); hp2.connect(airGain); airGain.connect(masterGain);
     src2.start();
   });
 
-  // ── LAYER 3 (15s): Data pulse train — TCP bursts ─────────────────────────
-  spawnLayer(30, () => {
+  // ── LAYER 3 (20s): Data pulse train — TCP bursts ────────────────────────
+  spawnLayer(20, () => {
     const intervals = [0.13, 0.26, 0.13, 0.52, 0.13, 0.13, 0.26, 1.04, 0.13, 0.26, 0.39];
-    let t = audioCtx.currentTime + 0.2;
+    let t = audioCtx.currentTime + 0.1;
     const freqs = [1000, 2000, 1500, 750];
 
     function schedBatch() {
-      for (let i = 0; i < 36; i++) {
+      // Re-anclar t al presente para evitar que se dispare en el pasado
+      t = Math.max(t, audioCtx.currentTime + 0.05);
+      for (let i = 0; i < 32; i++) {
         t += intervals[Math.floor(Math.random() * intervals.length)];
         const osc = audioCtx.createOscillator();
         const env = audioCtx.createGain();
         osc.type = 'sine';
         osc.frequency.value = freqs[Math.floor(Math.random() * freqs.length)];
         env.gain.setValueAtTime(0, t);
-        env.gain.linearRampToValueAtTime(0.055, t + 0.003);
+        env.gain.linearRampToValueAtTime(0.04, t + 0.003);
         env.gain.linearRampToValueAtTime(0, t + 0.022);
         osc.connect(env); env.connect(masterGain);
         osc.start(t); osc.stop(t + 0.03);
       }
-      setTimeout(schedBatch, 4500 + Math.random() * 2000);
+      setTimeout(schedBatch, 4000 + Math.random() * 2000);
     }
     schedBatch();
   });
 
-  // ── LAYER 4 (52s): Pad chord shimmer — 3 voces detuneadas ────────────────
-  // Acorde frío: raíz 110hz (A2), quinta 165hz, menor séptima 194hz
-  spawnLayer(52, () => {
-    addDetuneCluster(110,  [0,  0.9, -0.7], [0.09, 0.06, 0.05], 'sine', 0, 14);
-    addDetuneCluster(165,  [0,  1.2, -1.0], [0.06, 0.04, 0.03], 'sine', 2, 18);
-    addDetuneCluster(194,  [0, -0.8,  1.1], [0.04, 0.03, 0.02], 'sine', 4, 18);
-    // Shimmer: triángulo en armónico 3x
-    addDetuneCluster(330,  [0,  0.5],       [0.018, 0.012],      'triangle', 6, 20);
+  // ── LAYER 4 (35s): Pad chord shimmer ────────────────────────────────────
+  spawnLayer(35, () => {
+    addDetuneCluster(110, [0,  0.9, -0.7], [0.055, 0.035, 0.028], 'sine',     0,  12);
+    addDetuneCluster(165, [0,  1.2, -1.0], [0.038, 0.024, 0.018], 'sine',     3,  14);
+    addDetuneCluster(194, [0, -0.8,  1.1], [0.025, 0.016, 0.012], 'sine',     6,  14);
+    addDetuneCluster(330, [0,  0.5],       [0.012, 0.008],         'triangle', 8,  16);
   });
 
-  // ── LAYER 5 (80s): Sweep scan — tono que sube y baja ────────────────────
-  spawnLayer(80, () => {
+  // ── LAYER 5 (55s): Sweep scan high freq ─────────────────────────────────
+  spawnLayer(55, () => {
     const osc = audioCtx.createOscillator();
     const g = audioCtx.createGain();
     osc.type = 'sine';
     g.gain.setValueAtTime(0, audioCtx.currentTime);
-    g.gain.linearRampToValueAtTime(0.007, audioCtx.currentTime + 4);
-
+    g.gain.linearRampToValueAtTime(0.006, audioCtx.currentTime + 3);
     function sweep() {
       const t = audioCtx.currentTime;
       osc.frequency.setValueAtTime(11000, t);
-      osc.frequency.linearRampToValueAtTime(17500, t + 11);
+      osc.frequency.linearRampToValueAtTime(17000, t + 11);
       osc.frequency.linearRampToValueAtTime(11000, t + 22);
       setTimeout(sweep, 22000);
     }
@@ -169,9 +177,8 @@ function initAudio() {
     osc.start(audioCtx.currentTime);
   });
 
-  // ── LAYER 6 (110s): Melodic data tones — pentatónica menor fría ──────────
-  // Notas: 220, 261, 311, 370, 415 (A3, C4, Eb4, F#4, Ab4)
-  spawnLayer(110, () => {
+  // ── LAYER 6 (75s): Melodic data tones — pentatónica menor ───────────────
+  spawnLayer(75, () => {
     const scale = [220, 261.6, 311.1, 369.9, 415.3, 440, 523.3];
     function spawnTone() {
       const freq = scale[Math.floor(Math.random() * scale.length)];
@@ -182,105 +189,97 @@ function initAudio() {
       osc.frequency.value = freq;
       const dur = 1.4 + Math.random() * 2.8;
       env.gain.setValueAtTime(0, t);
-      env.gain.linearRampToValueAtTime(0.038 + Math.random() * 0.022, t + 0.08);
+      env.gain.linearRampToValueAtTime(0.028 + Math.random() * 0.016, t + 0.08);
       env.gain.setTargetAtTime(0, t + dur * 0.6, dur * 0.35);
       osc.connect(env); env.connect(masterGain);
       osc.start(t); osc.stop(t + dur + 1);
       setTimeout(spawnTone, 800 + Math.random() * 2800);
     }
-// ── DIGITAL SCANNER NOISE ───────────────────────────────────────────────
-spawnLayer(95, () => {
-
-  function scannerSweep() {
-
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    const filter = audioCtx.createBiquadFilter();
-
-    osc.type = 'square';
-
-    filter.type = 'bandpass';
-    filter.frequency.value = 3000 + Math.random() * 5000;
-    filter.Q.value = 18;
-
-    const startFreq = 400 + Math.random() * 1200;
-    const endFreq = 9000 + Math.random() * 6000;
-
-    osc.frequency.setValueAtTime(startFreq, audioCtx.currentTime);
-
-    osc.frequency.exponentialRampToValueAtTime(
-      endFreq,
-      audioCtx.currentTime + 0.12 + Math.random() * 0.25
-    );
-
-    gain.gain.setValueAtTime(0.0001, audioCtx.currentTime);
-
-    gain.gain.exponentialRampToValueAtTime(
-      0.018,
-      audioCtx.currentTime + 0.01
-    );
-
-    gain.gain.exponentialRampToValueAtTime(
-      0.0001,
-      audioCtx.currentTime + 0.25
-    );
-
-    osc.connect(filter);
-    filter.connect(gain);
-    gain.connect(masterGain);
-
-    osc.start();
-    osc.stop(audioCtx.currentTime + 0.3);
-
-    setTimeout(scannerSweep, 400 + Math.random() * 1800);
-  }
-
-  scannerSweep();
-});
     spawnTone();
   });
 
-  // ── LAYER 7 (145s): Glitch bursts — micro fragmentos estériles ───────────
-  spawnLayer(145, () => {
+  // ── LAYER 7 (50s): Digital scanner — sweep de frecuencia filtrado ────────
+  spawnLayer(50, () => {
+    function scannerSweep() {
+      const t = audioCtx.currentTime + 0.01; // pequeño offset para evitar click
+      const osc = audioCtx.createOscillator();
+      const filter = audioCtx.createBiquadFilter();
+      const gain = audioCtx.createGain();
+
+      osc.type = 'square';
+      filter.type = 'bandpass';
+      filter.frequency.value = 3000 + Math.random() * 4000;
+      filter.Q.value = 14;
+
+      const startFreq = 400 + Math.random() * 1000;
+      const endFreq = 6000 + Math.random() * 5000;
+      const dur = 0.12 + Math.random() * 0.22;
+
+      osc.frequency.setValueAtTime(startFreq, t);
+      osc.frequency.exponentialRampToValueAtTime(endFreq, t + dur);
+
+      // Envelope con fade-in mínimo para evitar click
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.014, t + 0.008);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.02);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(masterGain);
+
+      osc.start(t);
+      osc.stop(t + dur + 0.05);
+
+      setTimeout(scannerSweep, 500 + Math.random() * 2000);
+    }
+    scannerSweep();
+  });
+
+  // ── LAYER 8 (95s): Glitch bursts — micro fragmentos ─────────────────────
+  spawnLayer(95, () => {
     function glitchBurst() {
-      const count = 3 + Math.floor(Math.random() * 5);
-      let t = audioCtx.currentTime;
+      const count = 2 + Math.floor(Math.random() * 4);
+      let t = audioCtx.currentTime + 0.01;
       for (let i = 0; i < count; i++) {
-        t += 0.02 + Math.random() * 0.08;
-        const bufSize = Math.floor(audioCtx.sampleRate * 0.04);
+        t += 0.025 + Math.random() * 0.08;
+        const bufSize = Math.floor(audioCtx.sampleRate * 0.035);
         const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
         const d = buf.getChannelData(0);
-        for (let j = 0; j < bufSize; j++) d[j] = (Math.random() * 2 - 1) * (1 - j / bufSize);
+        // Fade in/out en el buffer para evitar clicks
+        for (let j = 0; j < bufSize; j++) {
+          const env = Math.sin((j / bufSize) * Math.PI);
+          d[j] = (Math.random() * 2 - 1) * env;
+        }
         const src = audioCtx.createBufferSource();
         src.buffer = buf;
         const bp = audioCtx.createBiquadFilter();
         bp.type = 'bandpass';
-        bp.frequency.value = 1200 + Math.random() * 3000;
-        bp.Q.value = 20;
+        bp.frequency.value = 1200 + Math.random() * 2500;
+        bp.Q.value = 10;
         const g = audioCtx.createGain();
-        g.gain.value = 0.04 + Math.random() * 0.09;
+        g.gain.value = 0.035 + Math.random() * 0.045;
         src.connect(bp); bp.connect(g); g.connect(masterGain);
-        src.start(t); src.stop(t + 0.05);
+        src.start(t);
       }
-      setTimeout(glitchBurst, 3500 + Math.random() * 7000);
+      setTimeout(glitchBurst, 3000 + Math.random() * 6000);
     }
     glitchBurst();
   });
 
-  // ── LAYER 8 (180s): Bell tones — muy espaciados, cristalinos ─────────────
-  spawnLayer(180, () => {
+  // ── LAYER 9 (120s): Bell tones cristalinos ───────────────────────────────
+  spawnLayer(120, () => {
     const bells = [523.3, 659.3, 783.9, 1046.5, 1318.5];
     function spawnBell() {
       const freq = bells[Math.floor(Math.random() * bells.length)];
       const t = audioCtx.currentTime;
-      // Bell = sine fundamental + dos parciales que decaen rápido
-      [[freq, 0.028], [freq * 2.756, 0.012], [freq * 5.404, 0.006]].forEach(([f, amp]) => {
+      [[freq, 0.022], [freq * 2.756, 0.009], [freq * 5.404, 0.004]].forEach(([f, amp]) => {
         const osc = audioCtx.createOscillator();
         const env = audioCtx.createGain();
         osc.type = 'sine';
         osc.frequency.value = f;
-        const decay = 1.8 + Math.random() * 1.4;
-        env.gain.setValueAtTime(amp, t);
+        const decay = 2.0 + Math.random() * 1.6;
+        env.gain.setValueAtTime(0, t);
+        env.gain.linearRampToValueAtTime(amp, t + 0.005);
         env.gain.exponentialRampToValueAtTime(0.0001, t + decay);
         osc.connect(env); env.connect(masterGain);
         osc.start(t); osc.stop(t + decay + 0.1);
@@ -288,6 +287,410 @@ spawnLayer(95, () => {
       setTimeout(spawnBell, 5000 + Math.random() * 9000);
     }
     spawnBell();
+  });
+
+  // ── MACHINE A (10s): Mechanical thump — golpes de maquinaria pesada ────────
+  // Sub-clicks rítmicos irregulares, como pistones o relés industriales
+  spawnLayer(10, () => {
+    function thump() {
+      const t = audioCtx.currentTime + 0.01;
+
+      // Cuerpo del golpe — sine muy corto con pitch decay (drum synthesis)
+      const body = audioCtx.createOscillator();
+      const bodyEnv = audioCtx.createGain();
+      body.type = 'sine';
+      body.frequency.setValueAtTime(90 + Math.random() * 40, t);
+      body.frequency.exponentialRampToValueAtTime(28, t + 0.08);
+      bodyEnv.gain.setValueAtTime(0.0001, t);
+      bodyEnv.gain.linearRampToValueAtTime(0.18, t + 0.003);
+      bodyEnv.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+      body.connect(bodyEnv); bodyEnv.connect(masterGain);
+      body.start(t); body.stop(t + 0.14);
+
+      // Transiente de impacto — noise burst muy corto
+      const nSize = Math.floor(audioCtx.sampleRate * 0.015);
+      const nBuf = audioCtx.createBuffer(1, nSize, audioCtx.sampleRate);
+      const nData = nBuf.getChannelData(0);
+      for (let i = 0; i < nSize; i++) nData[i] = (Math.random() * 2 - 1) * (1 - i / nSize);
+      const nSrc = audioCtx.createBufferSource();
+      nSrc.buffer = nBuf;
+      const nGain = audioCtx.createGain();
+      nGain.gain.value = 0.09;
+      nSrc.connect(nGain); nGain.connect(masterGain);
+      nSrc.start(t);
+
+      // Ritmo irregular: a veces doble golpe, a veces espera larga
+      const next = Math.random() < 0.2
+        ? 80 + Math.random() * 120          // doble rápido
+        : 1200 + Math.random() * 3800;      // pausa industrial
+      setTimeout(thump, next);
+    }
+    thump();
+  });
+
+  // ── MACHINE B (25s): Servo whine — motores eléctricos ───────────────────
+  // Tono de alta frecuencia que varía como un servo buscando posición
+  spawnLayer(25, () => {
+    function servoWhine() {
+      const t = audioCtx.currentTime + 0.01;
+      const dur = 0.4 + Math.random() * 1.8;
+      const osc = audioCtx.createOscillator();
+      const env = audioCtx.createGain();
+      const filt = audioCtx.createBiquadFilter();
+
+      osc.type = 'sawtooth';
+      filt.type = 'bandpass';
+      filt.Q.value = 22;
+
+      // Frecuencia base del servo: rango 2k-6kHz
+      const baseF = 2000 + Math.random() * 4000;
+      filt.frequency.value = baseF;
+
+      // El servo "busca" — frecuencia que sube, rebota, se estabiliza
+      osc.frequency.setValueAtTime(baseF * 0.8, t);
+      osc.frequency.linearRampToValueAtTime(baseF * 1.15, t + dur * 0.4);
+      osc.frequency.linearRampToValueAtTime(baseF * 0.95, t + dur * 0.7);
+      osc.frequency.linearRampToValueAtTime(baseF, t + dur);
+
+      env.gain.setValueAtTime(0, t);
+      env.gain.linearRampToValueAtTime(0.022, t + 0.02);
+      env.gain.setValueAtTime(0.022, t + dur - 0.04);
+      env.gain.linearRampToValueAtTime(0, t + dur);
+
+      osc.connect(filt); filt.connect(env); env.connect(masterGain);
+      osc.start(t); osc.stop(t + dur + 0.05);
+
+      setTimeout(servoWhine, 1500 + Math.random() * 5000);
+    }
+    servoWhine();
+  });
+
+  // ── MACHINE C (42s): Cooling fan — ventilador de banda angosta ───────────
+  // Ruido de banda muy estrecha, como un fan de servidor que acelera/desacelera
+  spawnLayer(42, () => {
+    // Simula fan con noise filtrado + modulación lenta de frecuencia del filtro
+    const bufSize = audioCtx.sampleRate * 3;
+    const fanBuf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+    const fanData = fanBuf.getChannelData(0);
+    for (let i = 0; i < bufSize; i++) fanData[i] = Math.random() * 2 - 1;
+
+    const fanSrc = audioCtx.createBufferSource();
+    fanSrc.buffer = fanBuf;
+    fanSrc.loop = true;
+
+    // Dos filtros en serie para banda muy estrecha
+    const bp1 = audioCtx.createBiquadFilter();
+    bp1.type = 'bandpass';
+    bp1.frequency.value = 3200;
+    bp1.Q.value = 30;
+
+    const bp2 = audioCtx.createBiquadFilter();
+    bp2.type = 'bandpass';
+    bp2.frequency.value = 3200;
+    bp2.Q.value = 30;
+
+    const fanGain = audioCtx.createGain();
+    fanGain.gain.setValueAtTime(0, audioCtx.currentTime);
+    fanGain.gain.linearRampToValueAtTime(0.055, audioCtx.currentTime + 8);
+
+    fanSrc.connect(bp1); bp1.connect(bp2); bp2.connect(fanGain);
+    fanGain.connect(masterGain);
+    fanSrc.start();
+
+    // LFO sobre la frecuencia del filtro — simula fluctuación de RPM
+    const fanLfo = audioCtx.createOscillator();
+    const fanLfoDepth = audioCtx.createGain();
+    fanLfo.type = 'sine';
+    fanLfo.frequency.value = 0.04 + Math.random() * 0.06; // ciclo ~15-25s
+    fanLfoDepth.gain.value = 600; // ±600hz de variación
+    fanLfo.connect(fanLfoDepth);
+    fanLfoDepth.connect(bp1.frequency);
+    fanLfoDepth.connect(bp2.frequency);
+    fanLfo.start(audioCtx.currentTime);
+  });
+
+  // ── MACHINE D (65s): Relay clicks — contactores eléctricos ──────────────
+  // Clicks metálicos secos, como relés o disyuntores activándose
+  spawnLayer(65, () => {
+    function relayClick() {
+      const t = audioCtx.currentTime + 0.01;
+
+      // Click metálico = noise burst muy corto + resonancia metálica
+      const cSize = Math.floor(audioCtx.sampleRate * 0.006);
+      const cBuf = audioCtx.createBuffer(1, cSize, audioCtx.sampleRate);
+      const cData = cBuf.getChannelData(0);
+      for (let i = 0; i < cSize; i++) cData[i] = (Math.random() * 2 - 1) * (1 - i / cSize);
+      const cSrc = audioCtx.createBufferSource();
+      cSrc.buffer = cBuf;
+
+      // Highpass para que sea seco y metálico, no suave
+      const hp = audioCtx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 3000;
+
+      const cGain = audioCtx.createGain();
+      cGain.gain.value = 0.12;
+
+      cSrc.connect(hp); hp.connect(cGain); cGain.connect(masterGain);
+      cSrc.start(t);
+
+      // Resonancia metálica post-click — como la carcasa vibrando
+      const res = audioCtx.createOscillator();
+      const resEnv = audioCtx.createGain();
+      res.type = 'sine';
+      res.frequency.value = 4000 + Math.random() * 3000;
+      resEnv.gain.setValueAtTime(0.0001, t + 0.002);
+      resEnv.gain.linearRampToValueAtTime(0.018, t + 0.005);
+      resEnv.gain.exponentialRampToValueAtTime(0.0001, t + 0.08);
+      res.connect(resEnv); resEnv.connect(masterGain);
+      res.start(t + 0.002); res.stop(t + 0.1);
+
+      // A veces dispara en ráfaga rápida (como máquina iniciando secuencia)
+      if (Math.random() < 0.25) {
+        const extraClicks = 2 + Math.floor(Math.random() * 4);
+        for (let k = 1; k <= extraClicks; k++) {
+          setTimeout(() => relayClickSingle(), k * (30 + Math.random() * 80));
+        }
+      }
+
+      setTimeout(relayClick, 800 + Math.random() * 4500);
+    }
+
+    // Versión simple sin ráfaga — para los clicks extra de la ráfaga
+    function relayClickSingle() {
+      const t = audioCtx.currentTime + 0.005;
+      const cSize = Math.floor(audioCtx.sampleRate * 0.005);
+      const cBuf = audioCtx.createBuffer(1, cSize, audioCtx.sampleRate);
+      const cData = cBuf.getChannelData(0);
+      for (let i = 0; i < cSize; i++) cData[i] = (Math.random() * 2 - 1) * (1 - i / cSize);
+      const cSrc = audioCtx.createBufferSource();
+      cSrc.buffer = cBuf;
+      const hp = audioCtx.createBiquadFilter();
+      hp.type = 'highpass'; hp.frequency.value = 3500;
+      const g = audioCtx.createGain();
+      g.gain.value = 0.07;
+      cSrc.connect(hp); hp.connect(g); g.connect(masterGain);
+      cSrc.start(t);
+    }
+
+    relayClick();
+  });
+
+  // MACHINE E (15s): HDD seek
+  spawnLayer(15, () => {
+    function hddSeek() {
+      const t = audioCtx.currentTime + 0.008;
+      const seekCount = 1 + Math.floor(Math.random() * 5);
+      let st = t;
+      for (let s = 0; s < seekCount; s++) {
+        const dur = 0.03 + Math.random() * 0.06;
+        const osc = audioCtx.createOscillator();
+        const env = audioCtx.createGain();
+        const filt = audioCtx.createBiquadFilter();
+        osc.type = 'sawtooth';
+        filt.type = 'bandpass'; filt.frequency.value = 5000 + Math.random() * 4000; filt.Q.value = 18;
+        const dir = Math.random() > 0.5 ? 1 : -1;
+        const fBase = 800 + Math.random() * 1600;
+        osc.frequency.setValueAtTime(fBase, st);
+        osc.frequency.linearRampToValueAtTime(fBase + dir * (400 + Math.random() * 800), st + dur);
+        env.gain.setValueAtTime(0, st);
+        env.gain.linearRampToValueAtTime(0.055, st + 0.003);
+        env.gain.exponentialRampToValueAtTime(0.0001, st + dur);
+        osc.connect(filt); filt.connect(env); env.connect(masterGain);
+        osc.start(st); osc.stop(st + dur + 0.01);
+        st += dur + 0.008 + Math.random() * 0.04;
+      }
+      setTimeout(hddSeek, 300 + Math.random() * 2500);
+    }
+    hddSeek();
+  });
+
+  // MACHINE F (30s): CPU hum - armónicos de 60hz como fuente de poder
+  spawnLayer(30, () => {
+    [60, 120, 180, 300].forEach((freq, i) => {
+      const osc = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq + (Math.random() - 0.5) * 0.4;
+      const amp = [0.038, 0.02, 0.011, 0.005][i];
+      g.gain.setValueAtTime(0, audioCtx.currentTime);
+      g.gain.linearRampToValueAtTime(amp, audioCtx.currentTime + 6);
+      const lfo = audioCtx.createOscillator();
+      const lfoD = audioCtx.createGain();
+      lfo.frequency.value = 0.03 + Math.random() * 0.04;
+      lfoD.gain.value = amp * 0.3;
+      lfo.connect(lfoD); lfoD.connect(g.gain);
+      lfo.start(audioCtx.currentTime);
+      osc.connect(g); g.connect(masterGain);
+      osc.start(audioCtx.currentTime);
+    });
+  });
+
+  // MACHINE G (18s): Bit crusher - audio colapsando a baja resolución
+  spawnLayer(18, () => {
+    function bitCrush() {
+      const t = audioCtx.currentTime + 0.008;
+      const dur = 0.08 + Math.random() * 0.35;
+      const bufSize = Math.floor(audioCtx.sampleRate * dur);
+      const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+      const data = buf.getChannelData(0);
+      const bits = 2 + Math.floor(Math.random() * 3);
+      const levels = Math.pow(2, bits);
+      const baseFreq = 200 + Math.random() * 600;
+      for (let i = 0; i < bufSize; i++) {
+        const raw = Math.sin(2 * Math.PI * baseFreq * i / audioCtx.sampleRate);
+        data[i] = Math.round(raw * levels) / levels;
+      }
+      const src = audioCtx.createBufferSource();
+      src.buffer = buf;
+      src.playbackRate.value = 0.25 + Math.random() * 0.5;
+      const env = audioCtx.createGain();
+      env.gain.setValueAtTime(0, t);
+      env.gain.linearRampToValueAtTime(0.05, t + 0.01);
+      env.gain.setValueAtTime(0.05, t + dur - 0.02);
+      env.gain.linearRampToValueAtTime(0, t + dur);
+      const hp = audioCtx.createBiquadFilter();
+      hp.type = 'highpass'; hp.frequency.value = 400;
+      src.connect(hp); hp.connect(env); env.connect(masterGain);
+      src.start(t);
+      setTimeout(bitCrush, 1800 + Math.random() * 6000);
+    }
+    bitCrush();
+  });
+
+  // MACHINE H (45s): Modem handshake - negociación 56k analógica
+  spawnLayer(45, () => {
+    function modemBurst() {
+      const t0 = audioCtx.currentTime + 0.01;
+      const toneCount = 4 + Math.floor(Math.random() * 5);
+      const modemFreqs = [300, 600, 900, 1200, 1500, 1800, 2100, 2400, 2700, 3000];
+      let cursor = t0;
+      for (let i = 0; i < toneCount; i++) {
+        const freq  = modemFreqs[Math.floor(Math.random() * modemFreqs.length)];
+        const freq2 = modemFreqs[Math.floor(Math.random() * modemFreqs.length)];
+        const dur = 0.04 + Math.random() * 0.18;
+        [freq, freq2].forEach(f => {
+          const osc = audioCtx.createOscillator();
+          const env = audioCtx.createGain();
+          osc.type = 'sine';
+          osc.frequency.value = f;
+          env.gain.setValueAtTime(0, cursor);
+          env.gain.linearRampToValueAtTime(0.025, cursor + 0.005);
+          env.gain.setValueAtTime(0.025, cursor + dur - 0.005);
+          env.gain.linearRampToValueAtTime(0, cursor + dur);
+          osc.connect(env); env.connect(masterGain);
+          osc.start(cursor); osc.stop(cursor + dur + 0.01);
+        });
+        cursor += dur + 0.005 + Math.random() * 0.02;
+      }
+      setTimeout(modemBurst, 4000 + Math.random() * 12000);
+    }
+    modemBurst();
+  });
+
+  // MACHINE I (55s): RAM bus noise - transferencia de bloques de memoria
+  spawnLayer(55, () => {
+    function ramBurst() {
+      const t = audioCtx.currentTime + 0.008;
+      const dur = 0.012 + Math.random() * 0.07;
+      const bufSize = Math.floor(audioCtx.sampleRate * dur);
+      const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < bufSize; i++) {
+        data[i] = (Math.random() > 0.5 ? 1 : -1) * Math.sin(i / bufSize * Math.PI);
+      }
+      const src = audioCtx.createBufferSource();
+      src.buffer = buf;
+      const hp = audioCtx.createBiquadFilter();
+      hp.type = 'highpass'; hp.frequency.value = 7000;
+      const g = audioCtx.createGain();
+      g.gain.value = 0.04 + Math.random() * 0.03;
+      src.connect(hp); hp.connect(g); g.connect(masterGain);
+      src.start(t);
+      const burstCount = 1 + Math.floor(Math.random() * 8);
+      for (let b = 1; b < burstCount; b++) {
+        setTimeout(ramBurst, b * (dur * 1000 + Math.random() * 25));
+      }
+      setTimeout(ramBurst, 500 + Math.random() * 2800 + burstCount * 80);
+    }
+    ramBurst();
+  });
+
+  // MACHINE J (70s): Network packet storm - TCP colapsando
+  spawnLayer(70, () => {
+    function packetStorm() {
+      const isDense = Math.random() < 0.35;
+      const count = isDense ? 8 + Math.floor(Math.random() * 16) : 1;
+      let t = audioCtx.currentTime + 0.005;
+      for (let i = 0; i < count; i++) {
+        t += isDense ? 0.008 + Math.random() * 0.03 : 0;
+        const bufSize = Math.floor(audioCtx.sampleRate * 0.004);
+        const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+        const d = buf.getChannelData(0);
+        for (let j = 0; j < bufSize; j++) d[j] = (Math.random() * 2 - 1) * (1 - j / bufSize);
+        const src = audioCtx.createBufferSource();
+        src.buffer = buf;
+        const bp = audioCtx.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.frequency.value = 800 + Math.random() * 4000;
+        bp.Q.value = 6 + Math.random() * 12;
+        const g = audioCtx.createGain();
+        g.gain.value = 0.028 + Math.random() * 0.04;
+        src.connect(bp); bp.connect(g); g.connect(masterGain);
+        src.start(t);
+      }
+      const dropout = Math.random() < 0.15;
+      setTimeout(packetStorm, dropout ? 400 + Math.random() * 1200 : 80 + Math.random() * 500);
+    }
+    packetStorm();
+  });
+
+  // MACHINE K (85s): Voltage sag - caída de voltaje con crackle eléctrico
+  spawnLayer(85, () => {
+    function voltageSag() {
+      const t = audioCtx.currentTime;
+      const sagAmt = 0.04 + Math.random() * 0.08;
+      const sagDur = 0.08 + Math.random() * 0.3;
+      masterGain.gain.setTargetAtTime(masterGain.gain.value * (1 - sagAmt), t, 0.01);
+      masterGain.gain.setTargetAtTime(0.55, t + sagDur, 0.15);
+      const cSize = Math.floor(audioCtx.sampleRate * 0.018);
+      const cBuf = audioCtx.createBuffer(1, cSize, audioCtx.sampleRate);
+      const cData = cBuf.getChannelData(0);
+      for (let i = 0; i < cSize; i++) cData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (cSize * 0.3));
+      const cSrc = audioCtx.createBufferSource();
+      cSrc.buffer = cBuf;
+      const cG = audioCtx.createGain(); cG.gain.value = 0.075;
+      const cHp = audioCtx.createBiquadFilter(); cHp.type = 'highpass'; cHp.frequency.value = 2000;
+      cSrc.connect(cHp); cHp.connect(cG); cG.connect(masterGain);
+      cSrc.start(t);
+      setTimeout(voltageSag, 3000 + Math.random() * 9000);
+    }
+    voltageSag();
+  });
+
+  // MACHINE L (100s): Buffer overflow glitch - cascada de frecuencias
+  spawnLayer(100, () => {
+    function overflow() {
+      const t = audioCtx.currentTime + 0.005;
+      const steps = 6 + Math.floor(Math.random() * 7);
+      const baseF = 100 + Math.random() * 200;
+      for (let i = 0; i < steps; i++) {
+        const st = t + i * 0.018;
+        const osc = audioCtx.createOscillator();
+        const env = audioCtx.createGain();
+        osc.type = i % 2 === 0 ? 'sawtooth' : 'square';
+        osc.frequency.value = baseF * Math.pow(2, i * 0.5);
+        env.gain.setValueAtTime(0, st);
+        env.gain.linearRampToValueAtTime(0.032 / (i + 1), st + 0.005);
+        env.gain.exponentialRampToValueAtTime(0.0001, st + 0.06);
+        const hp = audioCtx.createBiquadFilter();
+        hp.type = 'highpass'; hp.frequency.value = 300;
+        osc.connect(hp); hp.connect(env); env.connect(masterGain);
+        osc.start(st); osc.stop(st + 0.08);
+      }
+      setTimeout(overflow, 5000 + Math.random() * 12000);
+    }
+    overflow();
   });
 
   audioReady = true;
@@ -298,24 +701,33 @@ function spawnLayer(delaySec, fn) {
   setTimeout(fn, delaySec * 1000);
 }
 
-// Cluster de osciladores detuneados — genera efecto pad/shimmer
+// Cluster de osciladores detuneados con LFO de amplitud correcto
+// FIX: el LFO se enruta a través de un GainNode intermediario conectado al AudioParam
 function addDetuneCluster(baseFreq, detunes, amps, type, delay, fadeIn) {
   detunes.forEach((dt, i) => {
     const osc = audioCtx.createOscillator();
     const g = audioCtx.createGain();
     osc.type = type;
     osc.frequency.value = baseFreq + dt;
-    g.gain.setValueAtTime(0, audioCtx.currentTime);
-    g.gain.linearRampToValueAtTime(amps[i], audioCtx.currentTime + delay + fadeIn);
-    // Modulación de amplitud muy lenta — "respiración"
+
+    const startT = audioCtx.currentTime + delay;
+    g.gain.setValueAtTime(0, startT);
+    g.gain.linearRampToValueAtTime(amps[i], startT + fadeIn);
+
+    // LFO correcto: osc → gainNode (como modulador) → AudioParam.value
+    // Se usa un ConstantSourceNode como base + LFO para modular el gain
     const lfo = audioCtx.createOscillator();
-    const lfoG = audioCtx.createGain();
-    lfo.frequency.value = 0.07 + Math.random() * 0.05;
-    lfoG.gain.value = amps[i] * 0.18;
-    lfo.connect(lfoG); lfoG.connect(g.gain);
-    lfo.start(audioCtx.currentTime + delay);
+    const lfoDepth = audioCtx.createGain();
+    lfo.frequency.value = 0.06 + Math.random() * 0.05;
+    lfoDepth.gain.value = amps[i] * 0.15; // profundidad del LFO = 15% del amp
+
+    // La modulación suma al AudioParam — esto es correcto en Web Audio
+    lfo.connect(lfoDepth);
+    lfoDepth.connect(g.gain); // conectar GainNode al AudioParam es válido
+
+    lfo.start(startT);
     osc.connect(g); g.connect(masterGain);
-    osc.start(audioCtx.currentTime + delay);
+    osc.start(startT);
   });
 }
 
